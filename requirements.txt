@@ -1,0 +1,10 @@
+folium
+kaleido
+numpy
+openpyxl
+pandas
+plotly
+reportlab
+streamlit
+streamlit-authenticator
+streamlit-folium
