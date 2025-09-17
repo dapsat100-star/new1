@@ -1,16 +1,15 @@
+# telalogin/app.py
 # -*- coding: utf-8 -*-
 import os
-from pathlib import Path
-import yaml
-from yaml.loader import SafeLoader
-import streamlit as st
-from dotenv import load_dotenv
-from PIL import Image
-import streamlit_authenticator as stauth
 import base64
+from pathlib import Path
+from typing import Optional
+
+import streamlit as st
+from PIL import Image
 
 # ------------------------------------------------------------
-# Config
+# Config básica
 # ------------------------------------------------------------
 st.set_page_config(
     page_title="Plataforma de Metano OGMP 2.0 - L5",
@@ -18,10 +17,9 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-load_dotenv()
 
 # ------------------------------------------------------------
-# Oculta header/toolbar/menu e sidebar no login
+# Estilos (hero + esconder header/toolbar no login)
 # ------------------------------------------------------------
 st.markdown("""
 <style>
@@ -40,7 +38,7 @@ div[data-testid="collapsedControl"]{display:none!important;}
 .block-container{ padding-top: .5rem !important; }
 .lang-row{ position:absolute; top:8px; left:16px; }
 
-/* tipografia e inputs padrão */
+/* inputs e tipografia */
 * { color:#111111 !important; }
 a { color:#111111 !important; text-decoration: underline; }
 input, textarea, select, .stTextInput input, .stPassword input {
@@ -56,7 +54,7 @@ input::placeholder, textarea::placeholder { color:#444444 !important; opacity:1 
 }
 .login-title{ font-size:18px; margin:0 0 14px 0; font-weight:700; }
 
-/* ===== HERO LAYOUT (como no print) ===== */
+/* HERO */
 .hero-wrap{ max-width: 560px; }
 .logo-card{
   display:inline-block; background:#fff; padding:14px; border-radius:18px;
@@ -78,7 +76,6 @@ input::placeholder, textarea::placeholder { color:#444444 !important; opacity:1 
 .hero-bullets{ margin:8px 0 18px 18px; }
 .hero-bullets li{ margin:6px 0; }
 
-/* botões estilo do print */
 .btn-primary, .btn-ghost{
   display:inline-block; padding:10px 16px; border-radius:10px; text-decoration:none!important;
   border:1px solid #111; background:#fff; color:#111!important;
@@ -90,14 +87,12 @@ input::placeholder, textarea::placeholder { color:#444444 !important; opacity:1 
 # ------------------------------------------------------------
 # Fundo com imagem local (background.png → base64)
 # ------------------------------------------------------------
-def _bg_data_uri():
+def _bg_data_uri() -> Optional[str]:
     here = Path(__file__).parent
-    candidates = [here/"background.png", here/"assets"/"background.png"]
-    for p in candidates:
+    for p in (here/"background.png", here/"assets"/"background.png"):
         if p.exists():
-            mime = "image/png"
             b64 = base64.b64encode(p.read_bytes()).decode("ascii")
-            return f"data:{mime};base64,{b64}"
+            return f"data:image/png;base64,{b64}"
     return None
 
 _bg = _bg_data_uri()
@@ -106,33 +101,20 @@ if _bg:
     <style>
     [data-testid="stAppViewContainer"]::before {{
       content:"";
-      position: fixed; inset: 0;
-      z-index: 0; pointer-events: none;
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
       background: #f5f5f5 url('{_bg}') no-repeat center top;
-      background-size: clamp(900px, 85vw, 1600px) auto;  /* tamanho controlado */
-      opacity: .50;
-      filter: contrast(103%) brightness(101%);
+      background-size: clamp(900px, 85vw, 1600px) auto;
+      opacity: .50; filter: contrast(103%) brightness(101%);
     }}
-    .block-container, [data-testid="stSidebar"], header, footer {{
-      position: relative; z-index: 1;
-    }}
+    .block-container, [data-testid="stSidebar"], header, footer {{ position: relative; z-index: 1; }}
     @media (max-width: 1200px){{
-      [data-testid="stAppViewContainer"]::before {{
-        background-size: clamp(780px, 90vw, 1100px) auto;
-        opacity:.45;
-      }}
+      [data-testid="stAppViewContainer"]::before {{ background-size: clamp(780px, 90vw, 1100px) auto; opacity:.45; }}
     }}
     @media (max-width: 768px){{
-      [data-testid="stAppViewContainer"]::before {{
-        background-size: 700px auto;
-        background-position: center 40px;
-        opacity:.40;
-      }}
+      [data-testid="stAppViewContainer"]::before {{ background-size: 700px auto; background-position: center 40px; opacity:.40; }}
     }}
     </style>
     """, unsafe_allow_html=True)
-else:
-    st.warning("⚠️ 'background.png' não foi encontrado (raiz ou assets/).")
 
 # ------------------------------------------------------------
 # i18n
@@ -173,69 +155,47 @@ def show_sidebar():
     """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------
-# Autenticação
+# Autenticação (robusta: arquivo + Secrets)
 # ------------------------------------------------------------
+import yaml
+from yaml.loader import SafeLoader
+import streamlit_authenticator as stauth
+
 def build_authenticator() -> stauth.Authenticate:
-    with open("auth_config.yaml", "r", encoding="utf-8") as f:
-        config = yaml.load(f, Loader=SafeLoader)
+    here = Path(__file__).resolve().parent
+    candidates = [
+        here / "auth_config.yaml",          # mesma pasta do app.py
+        here.parent / "auth_config.yaml",   # raiz do repo
+        Path.cwd() / "auth_config.yaml",    # working dir do Streamlit
+    ]
+
+    cfg = None
+    for p in candidates:
+        if p.exists():
+            with p.open("r", encoding="utf-8") as f:
+                cfg = yaml.load(f, Loader=SafeLoader)
+            break
+
+    # fallback: Secrets (Manage app → Settings → Secrets)
+    if cfg is None and "auth_config" in st.secrets:
+        cfg = yaml.safe_load(st.secrets["auth_config"])
+
+    if cfg is None:
+        st.error(
+            "auth_config.yaml não encontrado. Coloque-o em `telalogin/` (mesma pasta do app.py) "
+            "OU defina `auth_config` em Settings → Secrets do Streamlit Cloud."
+        )
+        st.stop()
+
     return stauth.Authenticate(
-        config["credentials"], config["cookie"]["name"],
-        config["cookie"]["key"], config["cookie"]["expiry_days"]
+        cfg["credentials"], cfg["cookie"]["name"],
+        cfg["cookie"]["key"], cfg["cookie"]["expiry_days"]
     )
+
 authenticator = build_authenticator()
 
 # ------------------------------------------------------------
-# Layout (hero + login)
-# ------------------------------------------------------------
-left, right = st.columns([1.15, 1], gap="large")
-
-with left:
-    st.markdown("<div class='hero-wrap'>", unsafe_allow_html=True)
-
-    # logo em “cartão”
-    for cand in ("dapatlas.png","dapatlas.jpeg","logo.png","logo.jpeg"):
-        if Path(cand).exists():
-            st.markdown("<div class='logo-card'>", unsafe_allow_html=True)
-            st.image(Image.open(cand), width=180)  # sem use_column_width
-            st.markdown("</div>", unsafe_allow_html=True)
-            break
-
-    # eyebrow + textos
-    st.markdown(f'<div class="hero-eyebrow">{t["eyebrow"]}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="hero-title">{t["title"]}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="hero-sub">{t["subtitle"]}</div>', unsafe_allow_html=True)
-
-    # bullets
-    st.markdown(f"""
-    <ul class='hero-bullets'>
-      <li>{t['bul1']}</li>
-      <li>{t['bul2']}</li>
-      <li>{t['bul3']}</li>
-    </ul>
-    """, unsafe_allow_html=True)
-
-    # botões
-    st.markdown(
-        f"<div class='cta-row'><a class='btn-primary' href='#login'>{t['cta_login']}</a>"
-        f"<a class='btn-ghost' href='mailto:support@dapsistemas.com'>{t['cta_about']}</a></div>",
-        unsafe_allow_html=True
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with right:
-    st.markdown(
-        f"<div id='login' class='login-card'><div class='login-title'>{t['secure_access']}</div>",
-        unsafe_allow_html=True
-    )
-    fields = {"Form name": "", "Username": "Usuário", "Password": "Senha", "Login": "Entrar"}
-    try:
-        name, auth_status, username = authenticator.login("main", fields=fields)
-    except TypeError:
-        name, auth_status, username = authenticator.login("main")
-    st.markdown(f"<div class='login-note'>{t['confidential']}</div></div>", unsafe_allow_html=True)
-
-# ------------------------------------------------------------
-# UX do login (olho senha + lembrar usuário)
+# UX do login (olho na senha + lembrar usuário)
 # ------------------------------------------------------------
 def apply_ux_enhancements():
     st.markdown("""
@@ -247,7 +207,6 @@ def apply_ux_enhancements():
       .remember-row { display:flex; align-items:center; gap:8px; font-size:13px;
         margin:6px 0 10px 2px; color:#111;}
       .remember-row input[type="checkbox"]{ transform: scale(1.1); }
-      @media (max-width: 780px){ .footer{ position: static; } }
     </style>
     """, unsafe_allow_html=True)
 
@@ -313,7 +272,62 @@ def apply_ux_enhancements():
 apply_ux_enhancements()
 
 # ------------------------------------------------------------
-# Estado do login
+# Layout (hero + login)
+# ------------------------------------------------------------
+left, right = st.columns([1.15, 1], gap="large")
+
+with left:
+    st.markdown("<div class='hero-wrap'>", unsafe_allow_html=True)
+
+    # logo em “cartão”
+    for cand in ("dapatlas.png","dapatlas.jpeg","logo.png","logo.jpeg","daplogo_upscaled.png"):
+        p = Path(__file__).parent / cand
+        if p.exists():
+            st.markdown("<div class='logo-card'>", unsafe_allow_html=True)
+            st.image(Image.open(p), width=180)
+            st.markdown("</div>", unsafe_allow_html=True)
+            break
+
+    # eyebrow + textos
+    st.markdown(f'<div class="hero-eyebrow">{TXT[st.session_state.lang]["eyebrow"]}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="hero-title">{TXT[st.session_state.lang]["title"]}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="hero-sub">{TXT[st.session_state.lang]["subtitle"]}</div>', unsafe_allow_html=True)
+
+    # bullets
+    t = TXT[st.session_state.lang]
+    st.markdown(f"""
+    <ul class='hero-bullets'>
+      <li>{t['bul1']}</li>
+      <li>{t['bul2']}</li>
+      <li>{t['bul3']}</li>
+    </ul>
+    """, unsafe_allow_html=True)
+
+    # botões
+    st.markdown(
+        f"<div class='cta-row'><a class='btn-primary' href='#login'>{t['cta_login']}</a>"
+        f"<a class='btn-ghost' href='mailto:support@dapsistemas.com'>{t['cta_about']}</a></div>",
+        unsafe_allow_html=True
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with right:
+    st.markdown(
+        f"<div id='login' class='login-card'><div class='login-title'>{t['secure_access']}</div>",
+        unsafe_allow_html=True
+    )
+
+    # Campos traduzidos se possível
+    fields = {"Form name": "", "Username": "Usuário", "Password": "Senha", "Login": "Entrar"}
+    try:
+        name, auth_status, username = authenticator.login("main", fields=fields)
+    except TypeError:
+        name, auth_status, username = authenticator.login("main")
+
+    st.markdown(f"<div class='login-note'>{t['confidential']}</div></div>", unsafe_allow_html=True)
+
+# ------------------------------------------------------------
+# Estado do login + pós-login
 # ------------------------------------------------------------
 if 'auth_status' in locals():
     if 'last_auth_status' not in st.session_state:
@@ -331,6 +345,7 @@ if 'auth_status' in locals():
         st.info(t["login_hint"])
 
     if auth_status:
+        # Mostrar sidebar e botão de logout
         show_sidebar()
         st.sidebar.success(f'{t["logged_as"]}: {name}')
         try:
@@ -338,13 +353,19 @@ if 'auth_status' in locals():
         except Exception:
             authenticator.logout("Sair", "sidebar")
 
+        # Mensagem de boas-vindas e dica das Pages
+        st.markdown("---")
+        st.subheader("✅ Autenticado")
+        st.write("Use o menu **Pages** (barra lateral) para abrir **📷 Geoportal**.")
+        st.caption("Obs.: A página Geoportal só executa se você estiver logado — ela tem guarda de sessão.")
+
 # ------------------------------------------------------------
 # Footer
 # ------------------------------------------------------------
 APP_VERSION = os.getenv("APP_VERSION","v1.0.0")
-ENV_LABEL = "Produção"
+ENV_LABEL = os.getenv("ENV_LABEL","Produção")
 st.markdown(f"""
-<div class="footer">
+<div class="footer" style="margin-top:24px;">
   <div>DAP ATLAS · {APP_VERSION} · Ambiente: {ENV_LABEL}</div>
   <div>{t["internal_use"]} · <a href="mailto:support@dapsistemas.com">{t["support"]}</a> · 
        <a href="https://example.com/privacidade" target="_blank">{t["privacy"]}</a></div>
